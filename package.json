@@ -10,8 +10,8 @@
     "batch-capture": "./bin/batch-capture"
   },
   "dependencies": {
-    "commander": "~2.15.1",
-    "file-url": "~2.0.2",
+    "commander": "~5.0.0",
+    "file-url": "~3.0.0",
     "imagemin": "^7.0.1",
     "imagemin-mozjpeg": "^8.0.0",
     "imagemin-pngquant": "^8.0.0",
