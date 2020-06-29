@@ -1,11 +1,13 @@
 const _ = require('lodash');
-const assert = require('assert');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
+const http = require('http');
 const shell = require('shelljs');
+const assert = require('assert');
 const program = require('commander');
 const puppeteer = require('puppeteer');
-const fileUrl = require('file-url');
+const querystring = require('querystring');
+const serveHandler = require('serve-handler');
 const imagemin = require('imagemin');
 const imagemin_pngquant = require('imagemin-pngquant');
 const imagemin_mozjpeg = require('imagemin-mozjpeg');
@@ -22,22 +24,25 @@ function sleep(timeout) {
     })
 }
 
-async function renderPage(page, directory) {
-    await page.setViewport({...MAX_VIEWPORT, deviceScaleFactor: program.scale});
+function pathToUrl(str) {
+    return str.replace(path.sep, '/');
+}
 
-    const uri = fileUrl(path.join(directory, program.index));
-    console.log(`Loading ${uri}`);
-    await page.goto(uri);
+async function renderPage(page, absDir, relativePath) {
+    // Puppeteer load up that page
+    await page.setCacheEnabled(false);
+    const url = `http://localhost:${program.port}/${pathToUrl(relativePath)}`;
+    await page.goto(url);
 
     await sleep(program.wait * 1000);
 
-    const templateVars = Object.assign({folder: path.basename(directory)}, _.pick(program, ['quality', 'index', 'el', 'wait']));
-    const outputFilename = path.normalize(path.join(directory, outputTemplate(templateVars)));
-    const outputPath = path.dirname(outputFilename);
+    const templateVars = Object.assign({folder: path.basename(absDir)}, _.pick(program, ['quality', 'index', 'el', 'wait']));
+    const outputFilename = path.resolve(absDir, outputTemplate(templateVars));
     const type = (path.extname(outputFilename).toLowerCase() === '.png') ? 'png' : 'jpeg';
-    shell.mkdir('-p', outputPath);
+    shell.mkdir('-p', path.dirname(outputFilename));
 
     const clip = await page.evaluate(selector => document.querySelector(selector).getBoundingClientRect().toJSON(), program.el);
+    // console.log(`clipping rect = ${JSON.stringify(clip)}`);
 
     const screenshotParams = {path: outputFilename, clip, type};
     if (type === 'jpeg') {
@@ -81,30 +86,43 @@ async function optimizeImages(uncompressedFiles) {
 }
 
 async function go(rootDir) {
+    console.log(`Booting up http server on port ${program.port}...`);
+    const server = http.createServer((request, response) => {
+        return serveHandler(request, response, {
+            public: rootDir,
+            cleanUrls: false,
+            symlinks: true,
+        });
+    });
+    server.listen(program.port);
+
     console.log("Booting up puppeteer...");
     const instance = await puppeteer.launch();
+    const page = await instance.newPage();
     const uncompressedFiles = [];
     try {
-        const page = await instance.newPage();
         console.log("Capturing pages...");
+        await page.setViewport({...MAX_VIEWPORT, deviceScaleFactor: program.scale});
         for (const fn of shell.find(rootDir).filter(fn => path.basename(fn) === program.index)) {
-            const outputFilename = await renderPage(page, path.dirname(fn));
-            console.log(outputFilename);
+            const outputFilename = await renderPage(page, path.dirname(fn), path.relative(rootDir, fn));
+            console.log(`Captured ${outputFilename}`);
             uncompressedFiles.push(outputFilename);
         }
     } finally {
+        await page.close();
         await instance.close();
+        server.close();
     }
 
     if (uncompressedFiles.length > 0) {
-        console.log("Opimizing images...");
+        console.log("Optimizing images...");
         await optimizeImages(uncompressedFiles);
     }
 
     console.log("DONE.");
 }
 
-
+const parseIntBase10 = (str) => parseInt(str, 10);
 program
     .version(version)
     .usage('[options] <directory>')
@@ -116,8 +134,9 @@ program
         'Supported file types are .png and .jpg.', '../backup_{folder}.jpg')
     .option('-w, --wait <sec>', 'Time to wait in seconds', parseFloat, 0.1)
     .option('-s, --scale <float>', 'Physical pixel scale, use 2 for @2x retina', parseFloat, 1)
-    .option('-t, --targetsize <kb>', 'Output to an image with file size equal to the target size in kb', 40)
-    .option('-q, --quality <0-100>', 'Compressed image quality for the first pass of compression', parseFloat, 100)
+    .option('-t, --targetsize <kb>', 'Output to an image with file size equal to the target size in kb', parseIntBase10, 40)
+    .option('-q, --quality <0-100>', 'Compressed image quality for the first pass of compression', parseIntBase10, 100)
+    .option('-p, --port <1024-49151>', 'Port to serve internal webserver on', parseIntBase10, 9181)
     .parse(process.argv);
 
 // Make a template function out of the passed template string, using single curly braces for variables
@@ -126,5 +145,5 @@ const outputTemplate = _.template(program.output, {interpolate: /{([\s\S]+?)}/g}
 if (!program.args.length) {
     program.help();
 } else {
-    go(program.args[0]);
+    go(path.resolve(program.args[0]));
 }
