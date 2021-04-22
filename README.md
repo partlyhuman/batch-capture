@@ -7,7 +7,7 @@ in multiple subdirectories, and drop these shots in each directory.
 ### Installation
 
 Run
- `npm install -g git:github.com/partlyhuman/batch-capture` 
+ `npm install -g partlyhuman/batch-capture` 
 from the command line.
 
 ### Usage
