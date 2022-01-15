@@ -17,6 +17,6 @@
     "lodash": "^4.17.19",
     "puppeteer": "^3.0.0",
     "serve-handler": "^6.1.3",
-    "shelljs": "^0.8.3"
+    "shelljs": "^0.8.5"
   }
 }
